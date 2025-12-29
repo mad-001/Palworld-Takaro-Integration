@@ -280,12 +280,84 @@ std::string PalAPI::ExecuteCommand(const std::string& command) {
     std::string cmdLower = cmd;
     for (char& c : cmdLower) c = tolower(c);
 
+    // Built-in help command
+    if (cmdLower == "help" || cmdLower == "commands") {
+        std::string helpText = R"(
+=== Palworld Server Commands ===
+
+SERVER INFORMATION (GET):
+  info, getversion
+    Description: Get server version and info
+    Example: info
+
+  players, showplayers, getplayers
+    Description: List all online players
+    Example: players
+
+  settings, getsettings
+    Description: View server configuration settings
+    Example: settings
+
+  metrics, getmetrics
+    Description: View server performance metrics
+    Example: metrics
+
+SERVER ACTIONS (POST):
+  announce <message>
+    Description: Broadcast a message to all players
+    Arguments: <message> - The message to announce
+    Example: announce Server will restart in 5 minutes
+
+  kick <userid> [message]
+    Description: Kick a player from the server
+    Arguments: <userid> - Steam ID of player to kick
+               [message] - Optional kick reason message
+    Example: kick steam_76561198012345678
+    Example: kick steam_76561198012345678 Violation of server rules
+
+  ban <userid> [message]
+    Description: Ban a player from the server
+    Arguments: <userid> - Steam ID of player to ban
+               [message] - Optional ban reason message
+    Example: ban steam_76561198012345678
+    Example: ban steam_76561198012345678 Cheating detected
+
+  unban <userid>
+    Description: Remove a player from the ban list
+    Arguments: <userid> - Steam ID of player to unban
+    Example: unban steam_76561198012345678
+
+  save, saveworld
+    Description: Force save the game world
+    Example: save
+
+  shutdown
+    Description: Gracefully shutdown the server
+    Example: shutdown
+
+  stop, forcestop
+    Description: Force stop the server immediately
+    Example: stop
+
+OTHER COMMANDS:
+  help, commands
+    Description: Show this help message
+    Example: help
+
+Note: All commands are case-insensitive.
+For RCON commands not listed above, they will be forwarded directly to the game server.
+)";
+        return helpText;
+    }
+
     // Check if it's a REST API command
     std::string endpoint;
     std::string method = "GET";
+    std::string body;
     bool isRESTCommand = false;
 
-    if (cmdLower == "showplayers" || cmdLower == "getplayers") {
+    // GET endpoints
+    if (cmdLower == "showplayers" || cmdLower == "getplayers" || cmdLower == "players") {
         endpoint = "/v1/api/players";
         isRESTCommand = true;
     }
@@ -293,11 +365,88 @@ std::string PalAPI::ExecuteCommand(const std::string& command) {
         endpoint = "/v1/api/info";
         isRESTCommand = true;
     }
+    else if (cmdLower == "settings" || cmdLower == "getsettings") {
+        endpoint = "/v1/api/settings";
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "metrics" || cmdLower == "getmetrics") {
+        endpoint = "/v1/api/metrics";
+        isRESTCommand = true;
+    }
+    // POST endpoints
+    else if (cmdLower == "announce") {
+        endpoint = "/v1/api/announce";
+        method = "POST";
+        // Build JSON body: {"message": "args"}
+        body = "{\"message\":\"" + args + "\"}";
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "kick") {
+        endpoint = "/v1/api/kick";
+        method = "POST";
+        // Parse args as userid and optional message
+        // Format: kick userid [message]
+        std::string userid = args;
+        std::string message;
+        size_t msgPos = args.find(' ');
+        if (msgPos != std::string::npos) {
+            userid = args.substr(0, msgPos);
+            message = args.substr(msgPos + 1);
+            body = "{\"userid\":\"" + userid + "\",\"message\":\"" + message + "\"}";
+        } else {
+            body = "{\"userid\":\"" + userid + "\"}";
+        }
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "ban") {
+        endpoint = "/v1/api/ban";
+        method = "POST";
+        // Parse args as userid and optional message
+        // Format: ban userid [message]
+        std::string userid = args;
+        std::string message;
+        size_t msgPos = args.find(' ');
+        if (msgPos != std::string::npos) {
+            userid = args.substr(0, msgPos);
+            message = args.substr(msgPos + 1);
+            body = "{\"userid\":\"" + userid + "\",\"message\":\"" + message + "\"}";
+        } else {
+            body = "{\"userid\":\"" + userid + "\"}";
+        }
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "unban") {
+        endpoint = "/v1/api/unban";
+        method = "POST";
+        // Build JSON body: {"userid": "args"}
+        body = "{\"userid\":\"" + args + "\"}";
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "save" || cmdLower == "saveworld") {
+        endpoint = "/v1/api/save";
+        method = "POST";
+        body = "{}";  // Empty JSON object
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "shutdown") {
+        endpoint = "/v1/api/shutdown";
+        method = "POST";
+        // Optional: time in seconds and message
+        // For now, send empty body
+        body = "{}";
+        isRESTCommand = true;
+    }
+    else if (cmdLower == "stop" || cmdLower == "forcestop") {
+        endpoint = "/v1/api/stop";
+        method = "POST";
+        body = "{}";
+        isRESTCommand = true;
+    }
 
     // If it's a REST API command, use REST API
     if (isRESTCommand) {
-        LOG_INFO("Executing via REST API: {}", endpoint);
-        std::string response = CallRESTAPI(method, endpoint);
+        LOG_INFO("Executing via REST API: {} {} (body: {})", method, endpoint, body.empty() ? "none" : body);
+        std::string response = CallRESTAPI(method, endpoint, body);
         if (!response.empty()) {
             LOG_INFO("REST API response: {}", response);
             return response;
@@ -704,6 +853,12 @@ std::string PalAPI::CallRESTAPI(const std::string& method, const std::string& en
     std::string authHeader = "Authorization: Basic " + encodedCreds;
     std::wstring wAuthHeader(authHeader.begin(), authHeader.end());
     WinHttpAddRequestHeaders(hRequest, wAuthHeader.c_str(), -1, WINHTTP_ADDREQ_FLAG_ADD);
+
+    // Add Content-Type header for POST requests with body
+    if (!body.empty()) {
+        std::wstring contentTypeHeader = L"Content-Type: application/json";
+        WinHttpAddRequestHeaders(hRequest, contentTypeHeader.c_str(), -1, WINHTTP_ADDREQ_FLAG_ADD);
+    }
 
     // Send request
     BOOL result = WinHttpSendRequest(hRequest,
