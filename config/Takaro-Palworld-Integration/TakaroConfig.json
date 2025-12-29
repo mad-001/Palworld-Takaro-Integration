@@ -1,0 +1,6 @@
+{
+  "enabled": true,
+  "websocketUrl": "wss://connect.takaro.io/",
+  "identityToken": "TESTPalworld",
+  "registrationToken": "I52qvjDlTtKzTnzk1ayK9J1xu9y/QUH/tzd0Ay9D4NI="
+}

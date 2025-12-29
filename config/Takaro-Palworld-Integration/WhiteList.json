@@ -1,0 +1,14 @@
+{
+  "whitelistedPlayers": [
+    {
+      "playerId": "example-player-id-here",
+      "playerName": "ExamplePlayer",
+      "addedBy": "Admin",
+      "addedDate": "2024-12-28T00:00:00Z"
+    }
+  ],
+  "whitelistedAdminIPs": [
+    "127.0.0.1",
+    "192.168.1.100"
+  ]
+}

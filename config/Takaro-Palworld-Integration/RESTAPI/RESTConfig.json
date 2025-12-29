@@ -1,0 +1,35 @@
+{
+  "enabled": true,
+  "host": "0.0.0.0",
+  "port": 8765,
+  "cors": {
+    "enabled": true,
+    "allowedOrigins": [
+      "*"
+    ],
+    "allowedMethods": [
+      "GET",
+      "POST",
+      "PUT",
+      "DELETE",
+      "PATCH",
+      "OPTIONS"
+    ]
+  },
+  "authentication": {
+    "bearerTokens": [
+      "Bearer-Token-Example-Change-This-To-Secure-Random-String"
+    ]
+  },
+  "endpoints": {
+    "version": true,
+    "guilds": true,
+    "players": true,
+    "items": true
+  },
+  "staticFiles": {
+    "enabled": false,
+    "rootDirectory": "./static",
+    "defaultFile": "index.html"
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "allowAdminCheats": true,
+  "pvpMaxToBuildingDamage": 0,
+  "preventAdminPasswordInChat": true,
+  "enableRenaming": false,
+  "enablePalRenaming": false,
+  "bShowPlayerList": true,
+  "logging": {
+    "level": "info",
+    "rotatingFileSink": {
+      "enabled": true,
+      "maxSize": 10485760,
+      "maxFiles": 5
+    }
+  },
+  "antiCheat": {
+    "maxDamageMultiplier": 10.0,
+    "preventNegativeDamage": true,
+    "preventCrossPlayerDamage": true,
+    "preventPalOwnedByPlayerDamage": true
+  }
+}
