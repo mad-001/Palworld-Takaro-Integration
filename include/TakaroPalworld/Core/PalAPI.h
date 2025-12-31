@@ -52,6 +52,7 @@ public:
     bool GiveItem(const std::string& playerId, const std::string& itemId, int quantity);
     bool ClearInventory(const std::string& playerId);
     std::string GetItemQuantity(const std::string& playerId, const std::string& itemId);
+    std::vector<std::pair<std::string, int>> GetPlayerInventory(const std::string& playerId);
 
     // Technology management
     bool UnlockTechnology(const std::string& playerId, const std::string& techId);

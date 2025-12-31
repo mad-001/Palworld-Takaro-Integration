@@ -1,5 +1,6 @@
 #include "TakaroPalworld/Core/PalAPI.h"
 #include "TakaroPalworld/Core/Logger.h"
+#include "TakaroPalworld/Core/GameMemory.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
@@ -18,9 +19,11 @@ PalAPI& PalAPI::GetInstance() {
 bool PalAPI::Initialize() {
     LOG_INFO("Initializing PalAPI...");
 
-    // TODO: Initialize UE4SS or game hooking framework
-    // TODO: Find and cache important game objects (GameState, PlayerController, etc.)
-    // TODO: Set up function pointers for game functions
+    // Initialize game memory access
+    if (!GameMemory::Initialize()) {
+        LOG_ERROR("Failed to initialize GameMemory");
+        return false;
+    }
 
     initialized_ = true;
     LOG_INFO("PalAPI initialized successfully");
@@ -29,6 +32,7 @@ bool PalAPI::Initialize() {
 
 void PalAPI::Shutdown() {
     LOG_INFO("Shutting down PalAPI...");
+    GameMemory::Shutdown();
     initialized_ = false;
 }
 
@@ -144,8 +148,168 @@ bool PalAPI::ClearInventory(const std::string& playerId) {
 }
 
 std::string PalAPI::GetItemQuantity(const std::string& playerId, const std::string& itemId) {
-    // TODO: Query player inventory for item quantity
+    auto inventory = GetPlayerInventory(playerId);
+
+    for (const auto& [itemName, count] : inventory) {
+        if (itemName == itemId) {
+            return std::to_string(count);
+        }
+    }
+
     return "0";
+}
+
+std::vector<std::pair<std::string, int>> PalAPI::GetPlayerInventory(const std::string& playerId) {
+    std::vector<std::pair<std::string, int>> inventory;
+
+    APalGameStateInGame* gameState = GameMemory::GetGameState();
+    if (!gameState) {
+        LOG_ERROR("Failed to get game state");
+        return inventory;
+    }
+
+    // Try to find PlayerArray
+    const uintptr_t playerArrayOffsets[] = {0x2A0, 0x2B0, 0x2C0, 0x2D0};
+    TArray<APlayerState*>* playerArray = nullptr;
+
+    for (uintptr_t offset : playerArrayOffsets) {
+        auto* arr = reinterpret_cast<TArray<APlayerState*>*>(
+            reinterpret_cast<uintptr_t>(gameState) + offset
+        );
+        if (arr && arr->IsValid()) {
+            playerArray = arr;
+            LOG_DEBUG("Found PlayerArray at offset 0x{:X}", offset);
+            break;
+        }
+    }
+
+    if (!playerArray || !playerArray->IsValid()) {
+        LOG_ERROR("Failed to find PlayerArray");
+        return inventory;
+    }
+
+    // Find the player
+    APlayerState* targetPlayerState = nullptr;
+    for (int32_t i = 0; i < playerArray->Num(); i++) {
+        APlayerState* playerState = (*playerArray)[i];
+        if (!GameMemory::IsValidPointer(playerState)) {
+            continue;
+        }
+
+        // Try to find PlayerId (Steam ID)
+        const uintptr_t idOffsets[] = {0x300, 0x310, 0x320, 0x330};
+        for (uintptr_t offset : idOffsets) {
+            FString* steamId = reinterpret_cast<FString*>(
+                reinterpret_cast<uintptr_t>(playerState) + offset
+            );
+            if (steamId && steamId->Data) {
+                std::string idStr = steamId->ToString();
+                if (idStr == playerId) {
+                    targetPlayerState = playerState;
+                    LOG_DEBUG("Found player {} in PlayerArray", playerId);
+                    break;
+                }
+            }
+        }
+
+        if (targetPlayerState) break;
+    }
+
+    if (!targetPlayerState) {
+        LOG_WARNING("Player {} not found in PlayerArray", playerId);
+        return inventory;
+    }
+
+    // Get InventoryData
+    const uintptr_t invDataOffsets[] = {0x400, 0x410, 0x420, 0x430, 0x440, 0x450};
+    UPalPlayerInventoryData* invData = nullptr;
+
+    for (uintptr_t offset : invDataOffsets) {
+        invData = GameMemory::ReadPointer<UPalPlayerInventoryData>(targetPlayerState, offset);
+        if (GameMemory::IsValidPointer(invData)) {
+            LOG_DEBUG("Found InventoryData at offset 0x{:X}", offset);
+            break;
+        }
+    }
+
+    if (!invData) {
+        LOG_ERROR("Failed to find InventoryData for player {}", playerId);
+        return inventory;
+    }
+
+    // Try to get Containers array
+    const uintptr_t containerOffsets[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50};
+    TArray<void*>* containers = nullptr;
+
+    for (uintptr_t offset : containerOffsets) {
+        auto* arr = reinterpret_cast<TArray<void*>*>(
+            reinterpret_cast<uintptr_t>(invData) + offset
+        );
+        if (arr && arr->IsValid()) {
+            containers = arr;
+            LOG_DEBUG("Found Containers array at offset 0x{:X} with {} containers",
+                      offset, arr->Num());
+            break;
+        }
+    }
+
+    if (!containers || !containers->IsValid()) {
+        LOG_WARNING("No containers found for player {}", playerId);
+        return inventory;
+    }
+
+    // Iterate through containers (0 = main inventory, 1+ = other slots)
+    for (int32_t containerIdx = 0; containerIdx < containers->Num() && containerIdx < 5; containerIdx++) {
+        void* container = (*containers)[containerIdx];
+        if (!GameMemory::IsValidPointer(container)) {
+            continue;
+        }
+
+        // Try to find slots in container
+        // Assuming slots array is at offset 0x28-0x50 in container
+        const uintptr_t slotOffsets[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50};
+        TArray<FPalContainerSlot>* slots = nullptr;
+
+        for (uintptr_t offset : slotOffsets) {
+            auto* arr = reinterpret_cast<TArray<FPalContainerSlot>*>(
+                reinterpret_cast<uintptr_t>(container) + offset
+            );
+            if (arr && arr->IsValid() && arr->Num() > 0) {
+                slots = arr;
+                break;
+            }
+        }
+
+        if (!slots || !slots->IsValid()) {
+            continue;
+        }
+
+        // Iterate through slots
+        for (int32_t slotIdx = 0; slotIdx < slots->Num() && slotIdx < 50; slotIdx++) {
+            FPalContainerSlot& slot = (*slots)[slotIdx];
+
+            if (slot.StackCount > 0 && slot.ItemId) {
+                // Try to get item ID string
+                // ItemId is likely a struct with an FName or FString
+                const uintptr_t itemIdOffsets[] = {0x0, 0x8, 0x10, 0x18};
+                for (uintptr_t offset : itemIdOffsets) {
+                    FString* itemIdStr = reinterpret_cast<FString*>(
+                        reinterpret_cast<uintptr_t>(slot.ItemId) + offset
+                    );
+                    if (itemIdStr && itemIdStr->Data) {
+                        std::string itemName = itemIdStr->ToString();
+                        if (!itemName.empty()) {
+                            inventory.push_back({itemName, slot.StackCount});
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    LOG_INFO("Retrieved {} items from player {} inventory", inventory.size(), playerId);
+    return inventory;
 }
 
 // Technology management
@@ -192,17 +356,143 @@ bool PalAPI::SetAdminMode(const std::string& playerId, bool enabled) {
 
 // Guild management
 std::vector<GuildInfo> PalAPI::GetGuilds() {
-    // TODO: Retrieve all guilds from game
-    return {};
+    std::vector<GuildInfo> guilds;
+
+    APalGameStateInGame* gameState = GameMemory::GetGameState();
+    if (!gameState) {
+        LOG_ERROR("Failed to get game state");
+        return guilds;
+    }
+
+    // Try multiple offsets for GuildManager
+    const uintptr_t offsets[] = {0x300, 0x310, 0x320, 0x330, 0x340, 0x350};
+    UPalGroupGuildManager* guildManager = nullptr;
+
+    for (uintptr_t offset : offsets) {
+        guildManager = GameMemory::ReadPointer<UPalGroupGuildManager>(gameState, offset);
+        if (GameMemory::IsValidPointer(guildManager)) {
+            LOG_DEBUG("Found GuildManager at offset 0x{:X}", offset);
+            break;
+        }
+    }
+
+    if (!guildManager) {
+        LOG_ERROR("Failed to find GuildManager");
+        return guilds;
+    }
+
+    // Try multiple offsets for Guilds array
+    const uintptr_t arrayOffsets[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50};
+    TArray<UPalGroupGuildBase*>* guildsArray = nullptr;
+
+    for (uintptr_t offset : arrayOffsets) {
+        auto* arr = reinterpret_cast<TArray<UPalGroupGuildBase*>*>(
+            reinterpret_cast<uintptr_t>(guildManager) + offset
+        );
+        if (arr && arr->IsValid()) {
+            guildsArray = arr;
+            LOG_DEBUG("Found Guilds array at offset 0x{:X} with {} guilds", offset, arr->Num());
+            break;
+        }
+    }
+
+    if (!guildsArray || !guildsArray->IsValid()) {
+        LOG_WARNING("No guilds found or guilds array invalid");
+        return guilds;
+    }
+
+    // Iterate through guilds
+    for (int32_t i = 0; i < guildsArray->Num(); i++) {
+        UPalGroupGuildBase* guild = (*guildsArray)[i];
+        if (!GameMemory::IsValidPointer(guild)) {
+            continue;
+        }
+
+        GuildInfo info;
+
+        // Try to read guild data with multiple offset attempts
+        // GroupId
+        const uintptr_t idOffsets[] = {0x28, 0x30, 0x38, 0x40};
+        for (uintptr_t offset : idOffsets) {
+            FString* groupId = reinterpret_cast<FString*>(reinterpret_cast<uintptr_t>(guild) + offset);
+            if (groupId && groupId->Data) {
+                info.guildId = groupId->ToString();
+                if (!info.guildId.empty()) break;
+            }
+        }
+
+        // GroupName
+        const uintptr_t nameOffsets[] = {0x48, 0x50, 0x58, 0x60};
+        for (uintptr_t offset : nameOffsets) {
+            FString* groupName = reinterpret_cast<FString*>(reinterpret_cast<uintptr_t>(guild) + offset);
+            if (groupName && groupName->Data) {
+                info.guildName = groupName->ToString();
+                if (!info.guildName.empty()) break;
+            }
+        }
+
+        // AdminPlayerUId
+        const uintptr_t adminOffsets[] = {0x68, 0x70, 0x78, 0x80};
+        for (uintptr_t offset : adminOffsets) {
+            FPalPlayerUId* adminUid = reinterpret_cast<FPalPlayerUId*>(
+                reinterpret_cast<uintptr_t>(guild) + offset
+            );
+            if (adminUid && !adminUid->IsZero()) {
+                info.adminId = adminUid->ToString();
+                break;
+            }
+        }
+
+        // Players array
+        const uintptr_t playersOffsets[] = {0x88, 0x90, 0x98, 0xA0};
+        for (uintptr_t offset : playersOffsets) {
+            auto* players = reinterpret_cast<TArray<FPalGuildPlayerInfo>*>(
+                reinterpret_cast<uintptr_t>(guild) + offset
+            );
+            if (players && players->IsValid()) {
+                info.memberCount = players->Num();
+                for (int32_t j = 0; j < players->Num(); j++) {
+                    FPalGuildPlayerInfo& member = (*players)[j];
+                    info.memberIds.push_back(member.PlayerUId.ToString());
+                }
+                break;
+            }
+        }
+
+        if (!info.guildId.empty() || !info.guildName.empty()) {
+            guilds.push_back(info);
+            LOG_DEBUG("Found guild: {} (ID: {}, Members: {})",
+                      info.guildName, info.guildId, info.memberCount);
+        }
+    }
+
+    LOG_INFO("Retrieved {} guilds", guilds.size());
+    return guilds;
 }
 
 std::optional<GuildInfo> PalAPI::GetGuildInfo(const std::string& guildId) {
-    // TODO: Retrieve specific guild info
+    std::vector<GuildInfo> allGuilds = GetGuilds();
+
+    for (const auto& guild : allGuilds) {
+        if (guild.guildId == guildId) {
+            return guild;
+        }
+    }
+
     return std::nullopt;
 }
 
 std::optional<GuildInfo> PalAPI::GetPlayerGuild(const std::string& playerId) {
-    // TODO: Find which guild the player belongs to
+    std::vector<GuildInfo> allGuilds = GetGuilds();
+
+    for (const auto& guild : allGuilds) {
+        for (const auto& memberId : guild.memberIds) {
+            if (memberId == playerId) {
+                return guild;
+            }
+        }
+    }
+
     return std::nullopt;
 }
 

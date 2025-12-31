@@ -8,6 +8,20 @@
 
 #pragma comment(lib, "winhttp.lib")
 
+// Debug logging helper
+static void WriteWSDebug(const std::string& msg) {
+    HANDLE hFile = CreateFileA("TAKARO_WS_DEBUG.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+        NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile != INVALID_HANDLE_VALUE) {
+        DWORD written;
+        std::string timestamped = "[WS] " + msg;
+        WriteFile(hFile, timestamped.c_str(), timestamped.length(), &written, NULL);
+        WriteFile(hFile, "\r\n", 2, &written, NULL);
+        FlushFileBuffers(hFile);
+        CloseHandle(hFile);
+    }
+}
+
 // WebSocket implementation using WinHTTP
 namespace TakaroPalworld {
 
@@ -67,11 +81,13 @@ void TakaroClient::Shutdown() {
 }
 
 void TakaroClient::RunConnection() {
+    WriteWSDebug("Connection thread started");
     LOG_INFO("Takaro connection thread started");
 
     while (shouldRun_) {
         try {
             if (!isConnected_) {
+                WriteWSDebug("Attempting connection (attempt " + std::to_string(reconnectAttempts_ + 1) + ")");
                 LOG_INFO("Attempting to connect to Takaro (attempt {})", reconnectAttempts_ + 1);
 
                 // Initialize WinHTTP
@@ -82,10 +98,13 @@ void TakaroClient::RunConnection() {
                     0);
 
                 if (!hSession_) {
-                    LOG_ERROR("WinHttpOpen failed: {}", GetLastError());
+                    DWORD err = GetLastError();
+                    WriteWSDebug("WinHttpOpen failed: " + std::to_string(err));
+                    LOG_ERROR("WinHttpOpen failed: {}", err);
                     ScheduleReconnect();
                     continue;
                 }
+                WriteWSDebug("WinHttpOpen succeeded");
 
                 // Connect to server
                 hConnection_ = WinHttpConnect(static_cast<HINTERNET>(hSession_),
@@ -94,12 +113,15 @@ void TakaroClient::RunConnection() {
                     0);
 
                 if (!hConnection_) {
-                    LOG_ERROR("WinHttpConnect failed: {}", GetLastError());
+                    DWORD err = GetLastError();
+                    WriteWSDebug("WinHttpConnect failed: " + std::to_string(err));
+                    LOG_ERROR("WinHttpConnect failed: {}", err);
                     WinHttpCloseHandle(static_cast<HINTERNET>(hSession_));
                     hSession_ = nullptr;
                     ScheduleReconnect();
                     continue;
                 }
+                WriteWSDebug("WinHttpConnect succeeded");
 
                 // Open WebSocket request
                 HINTERNET hRequest = WinHttpOpenRequest(static_cast<HINTERNET>(hConnection_),
@@ -177,11 +199,13 @@ void TakaroClient::RunConnection() {
                     continue;
                 }
 
+                WriteWSDebug("WebSocket connection established successfully!");
                 LOG_INFO("WebSocket connection established successfully!");
                 isConnected_ = true;
                 reconnectAttempts_ = 0;
 
                 // Send identify message
+                WriteWSDebug("Sending identify message...");
                 SendIdentify();
             }
 
@@ -491,6 +515,66 @@ void TakaroClient::HandleRequest(const json& message) {
         else if (action == "getPlayers") {
             // Return empty players list for now
             responsePayload = json::array();
+        }
+        else if (action == "getGuilds") {
+            try {
+                PalAPI& palAPI = PalAPI::GetInstance();
+                std::vector<GuildInfo> guilds = palAPI.GetGuilds();
+
+                json guildsArray = json::array();
+                for (const auto& guild : guilds) {
+                    json guildObj = {
+                        {"guildId", guild.guildId},
+                        {"guildName", guild.guildName},
+                        {"adminId", guild.adminId},
+                        {"adminName", guild.adminName},
+                        {"level", guild.level},
+                        {"memberCount", guild.memberCount},
+                        {"memberIds", guild.memberIds}
+                    };
+                    guildsArray.push_back(guildObj);
+                }
+
+                responsePayload = guildsArray;
+                LOG_INFO("Returned {} guilds to Takaro", guilds.size());
+
+            } catch (const std::exception& e) {
+                LOG_ERROR("Failed to get guilds: {}", e.what());
+                responsePayload = {
+                    {"error", "Failed to retrieve guilds: " + std::string(e.what())}
+                };
+            }
+        }
+        else if (action == "getInventory") {
+            try {
+                if (!payload.contains("playerId")) {
+                    responsePayload = {
+                        {"error", "Missing required parameter: playerId"}
+                    };
+                } else {
+                    std::string playerId = payload["playerId"];
+                    PalAPI& palAPI = PalAPI::GetInstance();
+                    auto inventory = palAPI.GetPlayerInventory(playerId);
+
+                    json inventoryArray = json::array();
+                    for (const auto& [itemId, count] : inventory) {
+                        json itemObj = {
+                            {"itemId", itemId},
+                            {"count", count}
+                        };
+                        inventoryArray.push_back(itemObj);
+                    }
+
+                    responsePayload = inventoryArray;
+                    LOG_INFO("Returned {} items for player {}", inventory.size(), playerId);
+                }
+
+            } catch (const std::exception& e) {
+                LOG_ERROR("Failed to get inventory: {}", e.what());
+                responsePayload = {
+                    {"error", "Failed to retrieve inventory: " + std::string(e.what())}
+                };
+            }
         }
         else if (action == "getServerInfo") {
             responsePayload = {

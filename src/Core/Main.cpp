@@ -1,5 +1,6 @@
 // Step 4: Add Config, PalAPI, TakaroClient, and REST API headers
 #include "TakaroPalworld/Core/Config.h"
+#include "TakaroPalworld/Core/Logger.h"
 #include "TakaroPalworld/Core/PalAPI.h"
 #include "TakaroPalworld/Takaro/TakaroClient.h"
 #include "TakaroPalworld/API/RestServer.h"
@@ -33,11 +34,17 @@ static HANDLE g_MainThread = NULL;
 
 void Initialize() {
     WriteBootLog("===========================================");
-    WriteBootLog("WEBSOCKET VERSION - 2025-12-29 03:45");
+    WriteBootLog("WEBSOCKET VERSION - 2025-12-31 02:30 - WITH WS DEBUG");
     WriteBootLog("Initialize() START - Testing WebSocket Build");
     WriteBootLog("===========================================");
 
     try {
+        // Initialize Logger first
+        WriteBootLog("Initializing Logger...");
+        auto& logger = TakaroPalworld::Logger::GetInstance();
+        logger.Initialize("./logs", 1024 * 1024 * 5, 3);  // 5MB per file, 3 files
+        WriteBootLog("Logger initialized successfully!");
+
         // Load Config
         WriteBootLog("Loading ConfigManager...");
         auto& config = TakaroPalworld::ConfigManager::GetInstance();
