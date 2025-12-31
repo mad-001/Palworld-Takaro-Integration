@@ -10,7 +10,7 @@
 
 // Debug logging helper
 static void WriteWSDebug(const std::string& msg) {
-    HANDLE hFile = CreateFileA("TAKARO_WS_DEBUG.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
+    HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_WS_DEBUG.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (hFile != INVALID_HANDLE_VALUE) {
         DWORD written;
@@ -425,7 +425,7 @@ void TakaroClient::HandleRequest(const json& message) {
 
         // Write to boot log for debugging
         {
-            HANDLE hFile = CreateFileA("TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
             if (hFile != INVALID_HANDLE_VALUE) {
                 std::string logMsg = "REQUEST: " + action + " (requestId: " + requestId + ")\n";
                 if (payload.contains("args")) {
@@ -462,7 +462,7 @@ void TakaroClient::HandleRequest(const json& message) {
 
             // Log command execution
             {
-                HANDLE hFile = CreateFileA("TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
                 if (hFile != INVALID_HANDLE_VALUE) {
                     std::string logMsg = "EXECUTING COMMAND: " + command + "\n";
                     DWORD written;
@@ -484,7 +484,7 @@ void TakaroClient::HandleRequest(const json& message) {
 
                 // Log success
                 {
-                    HANDLE hFile = CreateFileA("TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
                     if (hFile != INVALID_HANDLE_VALUE) {
                         std::string logMsg = "COMMAND SUCCESS: " + command + "\nRESPONSE: " + result + "\n";
                         DWORD written;
@@ -501,7 +501,7 @@ void TakaroClient::HandleRequest(const json& message) {
 
                 // Log failure
                 {
-                    HANDLE hFile = CreateFileA("TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
                     if (hFile != INVALID_HANDLE_VALUE) {
                         std::string logMsg = "COMMAND FAILED: " + command + "\n";
                         DWORD written;

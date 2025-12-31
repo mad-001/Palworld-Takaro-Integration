@@ -10,7 +10,7 @@
 // C++ logging with std::string
 static void WriteBootLog(const std::string& message) {
     HANDLE hFile = CreateFileA(
-        "Takaro-Boot.txt",
+        "./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/Takaro-Boot.txt",
         FILE_APPEND_DATA,
         FILE_SHARE_READ | FILE_SHARE_WRITE,
         NULL,
@@ -42,7 +42,7 @@ void Initialize() {
         // Initialize Logger first
         WriteBootLog("Initializing Logger...");
         auto& logger = TakaroPalworld::Logger::GetInstance();
-        logger.Initialize("./logs", 1024 * 1024 * 5, 3);  // 5MB per file, 3 files
+        logger.Initialize("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs", 1024 * 1024 * 5, 3);  // 5MB per file, 3 files
         WriteBootLog("Logger initialized successfully!");
 
         // Load Config
@@ -50,8 +50,8 @@ void Initialize() {
         auto& config = TakaroPalworld::ConfigManager::GetInstance();
         WriteBootLog("ConfigManager instance created");
 
-        WriteBootLog("Loading configurations from ./Takaro-Palworld-Integration...");
-        config.LoadConfigurations("./Takaro-Palworld-Integration");
+        WriteBootLog("Loading configurations from ./Pal/Binaries/Win64/Takaro-Palworld-Integration...");
+        config.LoadConfigurations("./Pal/Binaries/Win64/Takaro-Palworld-Integration");
         WriteBootLog("Configurations loaded successfully!");
 
         // Debug: Log bearer tokens
@@ -79,7 +79,7 @@ void Initialize() {
 
         // Log Takaro config details
         {
-            HANDLE hFile = CreateFileA("TAKARO_CONNECTION.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_CONNECTION.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
             if (hFile != INVALID_HANDLE_VALUE) {
                 std::string info = "Takaro Config:\n";
                 info += "Enabled: " + std::string(takaroConfig.enabled ? "true" : "false") + "\n";
@@ -113,7 +113,7 @@ void Initialize() {
 
         // Write port to separate file
         {
-            HANDLE hFile = CreateFileA("PORT_INFO.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/PORT_INFO.txt", GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
             if (hFile != INVALID_HANDLE_VALUE) {
                 std::string portInfo = "Port: " + std::to_string(restConfig.port) + "\n";
                 portInfo += "Host: " + restConfig.host + "\n";
@@ -186,7 +186,7 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
                 WriteBootLog("***********************************************************");
 
                 HANDLE hFile = CreateFileA(
-                    "TAKARO_LOADED.txt",
+                    "./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_LOADED.txt",
                     GENERIC_WRITE,
                     0,
                     NULL,
