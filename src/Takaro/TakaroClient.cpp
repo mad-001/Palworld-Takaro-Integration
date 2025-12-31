@@ -460,54 +460,98 @@ void TakaroClient::HandleRequest(const json& message) {
                 }
             }
 
-            // Log command execution
-            {
-                HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-                if (hFile != INVALID_HANDLE_VALUE) {
-                    std::string logMsg = "EXECUTING COMMAND: " + command + "\n";
-                    DWORD written;
-                    WriteFile(hFile, logMsg.c_str(), logMsg.length(), &written, NULL);
-                    FlushFileBuffers(hFile);
-                    CloseHandle(hFile);
+            // Intercept special commands that should use data handlers instead of RCON
+            if (command == "getGuilds") {
+                // Route to getGuilds handler
+                try {
+                    PalAPI& palAPI = PalAPI::GetInstance();
+                    std::vector<GuildInfo> guilds = palAPI.GetGuilds();
+
+                    json guildsArray = json::array();
+                    for (const auto& guild : guilds) {
+                        json guildObj = {
+                            {"guildId", guild.guildId},
+                            {"guildName", guild.guildName},
+                            {"adminId", guild.adminId},
+                            {"adminName", guild.adminName},
+                            {"level", guild.level},
+                            {"memberCount", guild.memberCount},
+                            {"memberIds", guild.memberIds}
+                        };
+                        guildsArray.push_back(guildObj);
+                    }
+
+                    responsePayload = {
+                        {"success", true},
+                        {"rawResult", guildsArray.dump()}
+                    };
+                    LOG_INFO("Returned {} guilds via executeCommand route", guilds.size());
+
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Failed to get guilds: {}", e.what());
+                    responsePayload = {
+                        {"success", false},
+                        {"rawResult", "Failed to retrieve guilds: " + std::string(e.what())}
+                    };
                 }
             }
-
-            // Execute the command via PalAPI
-            auto& palAPI = PalAPI::GetInstance();
-            std::string result = palAPI.ExecuteCommand(command);
-
-            if (!result.empty()) {
+            else if (command == "getInventory") {
+                // Route to getInventory handler (placeholder for now)
                 responsePayload = {
-                    {"success", true},
-                    {"rawResult", result}
+                    {"success", false},
+                    {"rawResult", "getInventory not yet implemented"}
                 };
-
-                // Log success
+            }
+            else {
+                // Log command execution
                 {
                     HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
                     if (hFile != INVALID_HANDLE_VALUE) {
-                        std::string logMsg = "COMMAND SUCCESS: " + command + "\nRESPONSE: " + result + "\n";
+                        std::string logMsg = "EXECUTING COMMAND: " + command + "\n";
                         DWORD written;
                         WriteFile(hFile, logMsg.c_str(), logMsg.length(), &written, NULL);
                         FlushFileBuffers(hFile);
                         CloseHandle(hFile);
                     }
                 }
-            } else {
-                responsePayload = {
-                    {"success", false},
-                    {"rawResult", "Failed to execute command: " + command}
-                };
 
-                // Log failure
-                {
-                    HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-                    if (hFile != INVALID_HANDLE_VALUE) {
-                        std::string logMsg = "COMMAND FAILED: " + command + "\n";
-                        DWORD written;
-                        WriteFile(hFile, logMsg.c_str(), logMsg.length(), &written, NULL);
-                        FlushFileBuffers(hFile);
-                        CloseHandle(hFile);
+                // Execute the command via PalAPI
+                auto& palAPI = PalAPI::GetInstance();
+                std::string result = palAPI.ExecuteCommand(command);
+
+                if (!result.empty()) {
+                    responsePayload = {
+                        {"success", true},
+                        {"rawResult", result}
+                    };
+
+                    // Log success
+                    {
+                        HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (hFile != INVALID_HANDLE_VALUE) {
+                            std::string logMsg = "COMMAND SUCCESS: " + command + "\nRESPONSE: " + result + "\n";
+                            DWORD written;
+                            WriteFile(hFile, logMsg.c_str(), logMsg.length(), &written, NULL);
+                            FlushFileBuffers(hFile);
+                            CloseHandle(hFile);
+                        }
+                    }
+                } else {
+                    responsePayload = {
+                        {"success", false},
+                        {"rawResult", "Failed to execute command: " + command}
+                    };
+
+                    // Log failure
+                    {
+                        HANDLE hFile = CreateFileA("./Pal/Binaries/Win64/Takaro-Palworld-Integration/logs/TAKARO_REQUESTS.txt", FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                        if (hFile != INVALID_HANDLE_VALUE) {
+                            std::string logMsg = "COMMAND FAILED: " + command + "\n";
+                            DWORD written;
+                            WriteFile(hFile, logMsg.c_str(), logMsg.length(), &written, NULL);
+                            FlushFileBuffers(hFile);
+                            CloseHandle(hFile);
+                        }
                     }
                 }
             }
