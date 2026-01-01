@@ -187,10 +187,13 @@ public:
     // Get global pointers
     static UWorld* GetWorld();
     static APalGameStateInGame* GetGameState();
+    static void* GetGameInstance();
 
     // Pattern scanning
     static uintptr_t FindPattern(const char* moduleName, const char* pattern, const char* mask);
     static uintptr_t FindGWorld();
+    static uintptr_t FindGameInstance();
+    static void* FindGuildManager();
 
     // Memory utilities
     template<typename T>
@@ -218,6 +221,7 @@ public:
 private:
     static uintptr_t palworldBase_;
     static void* gWorld_;
+    static void* gameInstance_;
     static bool initialized_;
 };
 

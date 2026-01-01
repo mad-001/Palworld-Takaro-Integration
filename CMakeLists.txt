@@ -50,6 +50,7 @@ set(SOURCES
     src/Core/Logger.cpp
     src/Core/PalAPI.cpp
     src/Core/GameMemory.cpp
+    src/Core/SaveParser.cpp
 
     src/API/RestServer.cpp
     src/API/Middleware.cpp
@@ -78,6 +79,7 @@ set(HEADERS
     include/TakaroPalworld/Core/PalAPI.h
     include/TakaroPalworld/Core/Types.h
     include/TakaroPalworld/Core/GameMemory.h
+    include/TakaroPalworld/Core/SaveParser.h
 
     include/TakaroPalworld/API/RestServer.h
     include/TakaroPalworld/API/Middleware.h

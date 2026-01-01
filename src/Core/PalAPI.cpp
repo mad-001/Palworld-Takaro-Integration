@@ -1,10 +1,15 @@
 #include "TakaroPalworld/Core/PalAPI.h"
 #include "TakaroPalworld/Core/Logger.h"
 #include "TakaroPalworld/Core/GameMemory.h"
+#include "TakaroPalworld/Core/SaveParser.h"
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #include <windows.h>
 #include <winhttp.h>
+#include <chrono>
+#include <nlohmann/json.hpp>
+
+using json = nlohmann::json;
 
 #pragma comment(lib, "ws2_32.lib")
 #pragma comment(lib, "winhttp.lib")
@@ -354,119 +359,65 @@ bool PalAPI::SetAdminMode(const std::string& playerId, bool enabled) {
     return false;
 }
 
-// Guild management
+// Guild management - with player cache
+namespace {
+    // Cache for player names (cleared when stale or when players change guilds)
+    std::vector<std::string> cachedPlayerNames;
+    std::chrono::steady_clock::time_point cacheTimestamp;
+    const int CACHE_DURATION_MINUTES = 5;  // Cache valid for 5 minutes
+}
+
 std::vector<GuildInfo> PalAPI::GetGuilds() {
-    std::vector<GuildInfo> guilds;
+    LOG_INFO("GetGuilds() - Reading from save file");
 
-    APalGameStateInGame* gameState = GameMemory::GetGameState();
-    if (!gameState) {
-        LOG_ERROR("Failed to get game state");
-        return guilds;
-    }
+    // Use save file parser instead of memory access
+    std::string savePath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\PalServer\\Pal\\Saved\\SaveGames\\0\\D7EE49E04E615D88090F9380049E9855\\Level.sav";
 
-    // Try multiple offsets for GuildManager
-    const uintptr_t offsets[] = {0x300, 0x310, 0x320, 0x330, 0x340, 0x350};
-    UPalGroupGuildManager* guildManager = nullptr;
+    // Check if cache is still valid
+    auto now = std::chrono::steady_clock::now();
+    auto cacheAge = std::chrono::duration_cast<std::chrono::minutes>(now - cacheTimestamp).count();
 
-    for (uintptr_t offset : offsets) {
-        guildManager = GameMemory::ReadPointer<UPalGroupGuildManager>(gameState, offset);
-        if (GameMemory::IsValidPointer(guildManager)) {
-            LOG_DEBUG("Found GuildManager at offset 0x{:X}", offset);
-            break;
-        }
-    }
+    if (cachedPlayerNames.empty() || cacheAge >= CACHE_DURATION_MINUTES) {
+        LOG_INFO("Player cache is stale or empty, refreshing from RCON...");
 
-    if (!guildManager) {
-        LOG_ERROR("Failed to find GuildManager");
-        return guilds;
-    }
+        try {
+            // Get player list from RCON 'players' command
+            std::string playersResponse = ExecuteCommand("players");
 
-    // Try multiple offsets for Guilds array
-    const uintptr_t arrayOffsets[] = {0x28, 0x30, 0x38, 0x40, 0x48, 0x50};
-    TArray<UPalGroupGuildBase*>* guildsArray = nullptr;
+            if (!playersResponse.empty()) {
+                // Parse JSON response
+                auto playersJson = json::parse(playersResponse);
 
-    for (uintptr_t offset : arrayOffsets) {
-        auto* arr = reinterpret_cast<TArray<UPalGroupGuildBase*>*>(
-            reinterpret_cast<uintptr_t>(guildManager) + offset
-        );
-        if (arr && arr->IsValid()) {
-            guildsArray = arr;
-            LOG_DEBUG("Found Guilds array at offset 0x{:X} with {} guilds", offset, arr->Num());
-            break;
-        }
-    }
+                cachedPlayerNames.clear();
 
-    if (!guildsArray || !guildsArray->IsValid()) {
-        LOG_WARNING("No guilds found or guilds array invalid");
-        return guilds;
-    }
+                if (playersJson.contains("players") && playersJson["players"].is_array()) {
+                    for (const auto& player : playersJson["players"]) {
+                        if (player.contains("name")) {
+                            std::string characterName = player["name"];
+                            cachedPlayerNames.push_back(characterName);
+                        }
+                    }
 
-    // Iterate through guilds
-    for (int32_t i = 0; i < guildsArray->Num(); i++) {
-        UPalGroupGuildBase* guild = (*guildsArray)[i];
-        if (!GameMemory::IsValidPointer(guild)) {
-            continue;
-        }
-
-        GuildInfo info;
-
-        // Try to read guild data with multiple offset attempts
-        // GroupId
-        const uintptr_t idOffsets[] = {0x28, 0x30, 0x38, 0x40};
-        for (uintptr_t offset : idOffsets) {
-            FString* groupId = reinterpret_cast<FString*>(reinterpret_cast<uintptr_t>(guild) + offset);
-            if (groupId && groupId->Data) {
-                info.guildId = groupId->ToString();
-                if (!info.guildId.empty()) break;
-            }
-        }
-
-        // GroupName
-        const uintptr_t nameOffsets[] = {0x48, 0x50, 0x58, 0x60};
-        for (uintptr_t offset : nameOffsets) {
-            FString* groupName = reinterpret_cast<FString*>(reinterpret_cast<uintptr_t>(guild) + offset);
-            if (groupName && groupName->Data) {
-                info.guildName = groupName->ToString();
-                if (!info.guildName.empty()) break;
-            }
-        }
-
-        // AdminPlayerUId
-        const uintptr_t adminOffsets[] = {0x68, 0x70, 0x78, 0x80};
-        for (uintptr_t offset : adminOffsets) {
-            FPalPlayerUId* adminUid = reinterpret_cast<FPalPlayerUId*>(
-                reinterpret_cast<uintptr_t>(guild) + offset
-            );
-            if (adminUid && !adminUid->IsZero()) {
-                info.adminId = adminUid->ToString();
-                break;
-            }
-        }
-
-        // Players array
-        const uintptr_t playersOffsets[] = {0x88, 0x90, 0x98, 0xA0};
-        for (uintptr_t offset : playersOffsets) {
-            auto* players = reinterpret_cast<TArray<FPalGuildPlayerInfo>*>(
-                reinterpret_cast<uintptr_t>(guild) + offset
-            );
-            if (players && players->IsValid()) {
-                info.memberCount = players->Num();
-                for (int32_t j = 0; j < players->Num(); j++) {
-                    FPalGuildPlayerInfo& member = (*players)[j];
-                    info.memberIds.push_back(member.PlayerUId.ToString());
+                    LOG_INFO("Loaded {} player names from RCON into cache", cachedPlayerNames.size());
+                } else {
+                    LOG_WARNING("Players response missing 'players' array, using fallback");
                 }
-                break;
+            } else {
+                LOG_WARNING("Empty response from 'players' command, using fallback");
             }
+        } catch (const std::exception& e) {
+            LOG_ERROR("Failed to get players from RCON: {}, using fallback", e.what());
         }
 
-        if (!info.guildId.empty() || !info.guildName.empty()) {
-            guilds.push_back(info);
-            LOG_DEBUG("Found guild: {} (ID: {}, Members: {})",
-                      info.guildName, info.guildId, info.memberCount);
-        }
+        cacheTimestamp = now;
+    } else {
+        LOG_INFO("Using cached player list ({} players, cache age: {} minutes)",
+                 cachedPlayerNames.size(), cacheAge);
     }
 
-    LOG_INFO("Retrieved {} guilds", guilds.size());
+    std::vector<GuildInfo> guilds = SaveParser::ParseGuildsFromSave(savePath, cachedPlayerNames);
+
+    LOG_INFO("Retrieved {} guilds from save file", guilds.size());
     return guilds;
 }
 
@@ -569,6 +520,26 @@ std::string PalAPI::ExecuteCommand(const std::string& command) {
     // Convert to lowercase for comparison
     std::string cmdLower = cmd;
     for (char& c : cmdLower) c = tolower(c);
+
+    // Special handler for getGuilds - call C++ function directly
+    if (cmdLower == "getguilds") {
+        LOG_INFO("getGuilds command - calling GetGuilds()");
+        std::vector<GuildInfo> guilds = GetGuilds();
+
+        // Format each guild on separate lines
+        std::string output = "";
+        for (size_t i = 0; i < guilds.size(); i++) {
+            if (i > 0) output += "\n";
+            output += "Guild: " + guilds[i].guildName + "\n";
+            output += "Members: " + std::to_string(guilds[i].memberCount) + "\n";
+            for (const auto& member : guilds[i].memberIds) {
+                output += "  - " + member + "\n";
+            }
+        }
+
+        LOG_INFO("getGuilds returning: {}", output);
+        return output;
+    }
 
     // Built-in help command
     if (cmdLower == "help" || cmdLower == "commands") {

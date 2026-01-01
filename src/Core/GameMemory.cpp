@@ -8,6 +8,7 @@ namespace TakaroPalworld {
 // Static members
 uintptr_t GameMemory::palworldBase_ = 0;
 void* GameMemory::gWorld_ = nullptr;
+void* GameMemory::gameInstance_ = nullptr;
 bool GameMemory::initialized_ = false;
 
 bool GameMemory::Initialize() {
@@ -17,10 +18,17 @@ bool GameMemory::Initialize() {
 
     LOG_INFO("Initializing GameMemory...");
 
-    // Get Palworld base address
+    // Get Palworld base address - try multiple possible names
     HMODULE palModule = GetModuleHandleA("Pal-Win64-Shipping.exe");
     if (!palModule) {
         palModule = GetModuleHandleA("PalServer-Win64-Shipping.exe");
+    }
+    if (!palModule) {
+        palModule = GetModuleHandleA("PalServer-Win64-Shipping-Cmd.exe");
+    }
+    if (!palModule) {
+        // Use main executable as fallback
+        palModule = GetModuleHandleA(NULL);
     }
 
     if (!palModule) {
@@ -41,6 +49,13 @@ bool GameMemory::Initialize() {
     gWorld_ = reinterpret_cast<void*>(gWorldAddr);
     LOG_INFO("Found GWorld at address: 0x{:X}", gWorldAddr);
 
+    // Find GameInstance (used on dedicated servers)
+    uintptr_t gameInstanceAddr = FindGameInstance();
+    if (gameInstanceAddr != 0) {
+        gameInstance_ = reinterpret_cast<void*>(gameInstanceAddr);
+        LOG_INFO("Found GameInstance at address: 0x{:X}", gameInstanceAddr);
+    }
+
     initialized_ = true;
     LOG_INFO("GameMemory initialized successfully");
     return true;
@@ -50,6 +65,7 @@ void GameMemory::Shutdown() {
     LOG_INFO("Shutting down GameMemory...");
     initialized_ = false;
     gWorld_ = nullptr;
+    gameInstance_ = nullptr;
     palworldBase_ = 0;
 }
 
@@ -83,6 +99,44 @@ APalGameStateInGame* GameMemory::GetGameState() {
         }
     }
 
+    return nullptr;
+}
+
+void* GameMemory::GetGameInstance() {
+    if (!initialized_) {
+        LOG_ERROR("GetGameInstance: not initialized");
+        return nullptr;
+    }
+
+    // Try method 1: Global GameInstance pointer (may be NULL on dedicated servers)
+    if (gameInstance_) {
+        void** gameInstancePtr = static_cast<void**>(gameInstance_);
+        if (!IsBadReadPtr(gameInstancePtr, sizeof(void*))) {
+            void* instance = *gameInstancePtr;
+            if (instance) {
+                LOG_INFO("GetGameInstance: Found via global pointer = 0x{:X}", reinterpret_cast<uintptr_t>(instance));
+                return instance;
+            }
+        }
+    }
+
+    // Try method 2: Access via UWorld->OwningGameInstance (dedicated servers)
+    UWorld* world = GetWorld();
+    if (world) {
+        LOG_INFO("GetGameInstance: Trying UWorld->OwningGameInstance approach");
+
+        // Try multiple offsets for OwningGameInstance in UWorld
+        const uintptr_t offsets[] = {0x180, 0x188, 0x190, 0x198, 0x1A0, 0x1A8, 0x1B0, 0x1C0};
+        for (uintptr_t offset : offsets) {
+            void* instance = ReadPointer<void>(world, offset);
+            if (IsValidPointer(instance)) {
+                LOG_INFO("GetGameInstance: Found via UWorld+0x{:X} = 0x{:X}", offset, reinterpret_cast<uintptr_t>(instance));
+                return instance;
+            }
+        }
+    }
+
+    LOG_WARNING("GetGameInstance: Failed to find GameInstance via both methods");
     return nullptr;
 }
 
@@ -132,7 +186,8 @@ uintptr_t GameMemory::FindGWorld() {
 
     const char* moduleNames[] = {
         "Pal-Win64-Shipping.exe",
-        "PalServer-Win64-Shipping.exe"
+        "PalServer-Win64-Shipping.exe",
+        "PalServer-Win64-Shipping-Cmd.exe"
     };
 
     for (const char* moduleName : moduleNames) {
@@ -153,6 +208,56 @@ uintptr_t GameMemory::FindGWorld() {
 
     LOG_ERROR("GWorld pattern not found");
     return 0;
+}
+
+uintptr_t GameMemory::FindGameInstance() {
+    LOG_INFO("Searching for PalGameInstance...");
+
+    // Pattern: mov rax, [GameInstance]
+    const char* pattern = "\x48\x8B\x05\x00\x00\x00\x00\x48\x85\xC0";
+    const char* mask = "xxx????xxx";
+
+    const char* moduleNames[] = {
+        "Pal-Win64-Shipping.exe",
+        "PalServer-Win64-Shipping.exe",
+        "PalServer-Win64-Shipping-Cmd.exe"
+    };
+
+    for (const char* moduleName : moduleNames) {
+        uintptr_t patternAddr = FindPattern(moduleName, pattern, mask);
+        if (patternAddr != 0) {
+            int32_t offset = *reinterpret_cast<int32_t*>(patternAddr + 3);
+            uintptr_t instanceAddr = patternAddr + 7 + offset;
+            LOG_INFO("GameInstance found at: 0x{:X}", instanceAddr);
+            return instanceAddr;
+        }
+    }
+
+    LOG_WARNING("GameInstance pattern not found");
+    return 0;
+}
+
+void* GameMemory::FindGuildManager() {
+    LOG_INFO("Searching for GuildManager directly...");
+
+    // On dedicated servers, the GameInstance pattern actually points
+    // to something that can be used directly (possibly GuildManager or a subsystem)
+    if (!initialized_ || !gameInstance_) {
+        LOG_WARNING("Not initialized or gameInstance_ is null");
+        return nullptr;
+    }
+
+    // Try treating the GameInstance address directly as the manager
+    // (not dereferencing it as a pointer-to-pointer)
+    void* manager = gameInstance_;
+    if (IsValidPointer(manager)) {
+        LOG_INFO("Treating GameInstance address 0x{:X} directly as GuildManager",
+                 reinterpret_cast<uintptr_t>(manager));
+        return manager;
+    }
+
+    LOG_WARNING("GameInstance address not valid as direct pointer");
+    return nullptr;
 }
 
 bool GameMemory::IsValidPointer(void* ptr) {

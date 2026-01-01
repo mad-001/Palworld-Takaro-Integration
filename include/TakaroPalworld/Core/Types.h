@@ -48,8 +48,9 @@ struct GuildInfo {
     int level;
     int memberCount;
     std::vector<std::string> memberIds;
+    size_t dataOffset;  // Offset in save file for member search (internal use)
 
-    GuildInfo() : level(0), memberCount(0) {}
+    GuildInfo() : level(0), memberCount(0), dataOffset(0) {}
 };
 
 // BaseCamp information
