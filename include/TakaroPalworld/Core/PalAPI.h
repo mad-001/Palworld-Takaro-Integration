@@ -68,6 +68,7 @@ public:
 
     // Guild management
     std::vector<GuildInfo> GetGuilds();
+    std::vector<GuildInfo> RefreshGuilds();
     std::optional<GuildInfo> GetGuildInfo(const std::string& guildId);
     std::optional<GuildInfo> GetPlayerGuild(const std::string& playerId);
 

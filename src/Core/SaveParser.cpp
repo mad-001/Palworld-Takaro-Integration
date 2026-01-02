@@ -366,4 +366,107 @@ std::vector<GuildInfo> SaveParser::ParseGuildsFromSave(const std::string& savePa
     return guilds;
 }
 
+bool SaveParser::WriteGuildsCache(const std::vector<GuildInfo>& guilds, const std::string& cacheFilePath) {
+    LOG_INFO("Writing guilds cache to: {}", cacheFilePath);
+
+    std::ofstream file(cacheFilePath);
+    if (!file.is_open()) {
+        LOG_ERROR("Failed to open cache file for writing: {}", cacheFilePath);
+        return false;
+    }
+
+    // Write JSON array
+    file << "[\n";
+    for (size_t i = 0; i < guilds.size(); i++) {
+        const auto& guild = guilds[i];
+        file << "  {\n";
+        file << "    \"guildId\": \"" << guild.guildId << "\",\n";
+        file << "    \"guildName\": \"" << guild.guildName << "\",\n";
+        file << "    \"memberCount\": " << guild.memberCount << ",\n";
+        file << "    \"members\": [\n";
+
+        for (size_t j = 0; j < guild.memberIds.size(); j++) {
+            file << "      \"" << guild.memberIds[j] << "\"";
+            if (j < guild.memberIds.size() - 1) file << ",";
+            file << "\n";
+        }
+
+        file << "    ]\n";
+        file << "  }";
+        if (i < guilds.size() - 1) file << ",";
+        file << "\n";
+    }
+    file << "]\n";
+
+    file.close();
+    LOG_INFO("Successfully wrote {} guilds to cache", guilds.size());
+    return true;
+}
+
+std::vector<GuildInfo> SaveParser::ReadGuildsCache(const std::string& cacheFilePath) {
+    std::vector<GuildInfo> guilds;
+
+    LOG_INFO("Reading guilds cache from: {}", cacheFilePath);
+
+    std::ifstream file(cacheFilePath);
+    if (!file.is_open()) {
+        LOG_WARNING("Cache file not found: {}", cacheFilePath);
+        return guilds;
+    }
+
+    // Simple JSON parsing (expecting exact format from WriteGuildsCache)
+    std::string line;
+    GuildInfo currentGuild;
+    bool inGuild = false;
+    bool inMembers = false;
+
+    while (std::getline(file, line)) {
+        // Trim whitespace
+        size_t start = line.find_first_not_of(" \t\r\n");
+        if (start == std::string::npos) continue;
+        line = line.substr(start);
+
+        if (line.find("\"guildId\":") != std::string::npos) {
+            inGuild = true;
+            size_t valueStart = line.find("\"", line.find(":") + 1) + 1;
+            size_t valueEnd = line.find("\"", valueStart);
+            currentGuild.guildId = line.substr(valueStart, valueEnd - valueStart);
+        }
+        else if (line.find("\"guildName\":") != std::string::npos) {
+            size_t valueStart = line.find("\"", line.find(":") + 1) + 1;
+            size_t valueEnd = line.find("\"", valueStart);
+            currentGuild.guildName = line.substr(valueStart, valueEnd - valueStart);
+        }
+        else if (line.find("\"memberCount\":") != std::string::npos) {
+            size_t valueStart = line.find(":") + 1;
+            size_t valueEnd = line.find(",", valueStart);
+            if (valueEnd == std::string::npos) valueEnd = line.length();
+            currentGuild.memberCount = std::stoi(line.substr(valueStart, valueEnd - valueStart));
+        }
+        else if (line.find("\"members\":") != std::string::npos) {
+            inMembers = true;
+            currentGuild.memberIds.clear();
+        }
+        else if (inMembers && line.find("\"") != std::string::npos && line.find("]") == std::string::npos) {
+            size_t valueStart = line.find("\"") + 1;
+            size_t valueEnd = line.find("\"", valueStart);
+            if (valueEnd != std::string::npos) {
+                currentGuild.memberIds.push_back(line.substr(valueStart, valueEnd - valueStart));
+            }
+        }
+        else if (line.find("]") != std::string::npos && inMembers) {
+            inMembers = false;
+        }
+        else if (line.find("}") != std::string::npos && inGuild && !inMembers) {
+            guilds.push_back(currentGuild);
+            currentGuild = GuildInfo();
+            inGuild = false;
+        }
+    }
+
+    file.close();
+    LOG_INFO("Successfully read {} guilds from cache", guilds.size());
+    return guilds;
+}
+
 } // namespace TakaroPalworld

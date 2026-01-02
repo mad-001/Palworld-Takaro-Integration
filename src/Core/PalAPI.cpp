@@ -368,12 +368,121 @@ namespace {
 }
 
 std::vector<GuildInfo> PalAPI::GetGuilds() {
-    LOG_INFO("GetGuilds() - Reading from save file");
+    LOG_INFO("GetGuilds() - Reading from cache file");
 
-    // Use save file parser instead of memory access
-    std::string savePath = "C:\\Program Files (x86)\\Steam\\steamapps\\common\\PalServer\\Pal\\Saved\\SaveGames\\0\\D7EE49E04E615D88090F9380049E9855\\Level.sav";
+    // Get DLL location to find cache file
+    char dllPath[MAX_PATH];
+    HMODULE hModule = NULL;
+    static int dummy;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)&dummy, &hModule) == 0) {
+        LOG_ERROR("Failed to get module handle");
+        return {};
+    }
 
-    // Check if cache is still valid
+    if (GetModuleFileNameA(hModule, dllPath, MAX_PATH) == 0) {
+        LOG_ERROR("Failed to get module file name");
+        return {};
+    }
+
+    std::string dllPathStr(dllPath);
+    // Remove the DLL filename to get directory
+    size_t lastSlash = dllPathStr.find_last_of("\\");
+    std::string dllDir = dllPathStr.substr(0, lastSlash);
+
+    // Cache file in same directory as DLL
+    std::string cacheFilePath = dllDir + "\\Guilds.json";
+
+    // Read guilds from cache
+    std::vector<GuildInfo> guilds = SaveParser::ReadGuildsCache(cacheFilePath);
+
+    if (guilds.empty()) {
+        LOG_WARNING("Guild cache is empty or not found. Run 'refreshGuilds' to populate cache.");
+    }
+
+    return guilds;
+}
+
+std::vector<GuildInfo> PalAPI::RefreshGuilds() {
+    LOG_INFO("RefreshGuilds() - Parsing save file and updating cache");
+
+    // Get DLL location and navigate to save file dynamically
+    char dllPath[MAX_PATH];
+    HMODULE hModule = NULL;
+
+    // Use a dummy variable address to get module handle
+    static int dummy;
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)&dummy, &hModule) == 0) {
+        LOG_ERROR("Failed to get module handle");
+        return {};
+    }
+
+    if (GetModuleFileNameA(hModule, dllPath, MAX_PATH) == 0) {
+        LOG_ERROR("Failed to get module file name");
+        return {};
+    }
+
+    std::string dllPathStr(dllPath);
+    LOG_INFO("DLL location: {}", dllPathStr);
+
+    // Get DLL directory for cache file
+    size_t lastSlash = dllPathStr.find_last_of("\\");
+    std::string dllDir = dllPathStr.substr(0, lastSlash);
+    std::string cacheFilePath = dllDir + "\\Guilds.json";
+
+    // Navigate up: Mods/Takaro-Palworld-Integration -> Win64 -> Binaries -> Pal
+    size_t pos = dllPathStr.find("\\Pal\\Binaries\\Win64");
+    if (pos == std::string::npos) {
+        LOG_ERROR("Could not find Pal folder in path: {}", dllPathStr);
+        return {};
+    }
+
+    std::string palRoot = dllPathStr.substr(0, pos + 4); // Include "\Pal"
+    std::string saveGamesPath = palRoot + "\\Saved\\SaveGames\\0";
+
+    LOG_INFO("Looking for save files in: {}", saveGamesPath);
+
+    // Find most recent SaveID folder
+    WIN32_FIND_DATAA findData;
+    HANDLE hFind = FindFirstFileA((saveGamesPath + "\\*").c_str(), &findData);
+
+    if (hFind == INVALID_HANDLE_VALUE) {
+        LOG_ERROR("Failed to open SaveGames folder: {}", saveGamesPath);
+        return {};
+    }
+
+    std::string newestSaveId;
+    FILETIME newestTime = {0, 0};
+
+    do {
+        if (findData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) {
+            std::string folderName = findData.cFileName;
+            if (folderName != "." && folderName != "..") {
+                // Check if Level.sav exists in this folder
+                std::string levelSavPath = saveGamesPath + "\\" + folderName + "\\Level.sav";
+                if (GetFileAttributesA(levelSavPath.c_str()) != INVALID_FILE_ATTRIBUTES) {
+                    // Compare modification time
+                    if (CompareFileTime(&findData.ftLastWriteTime, &newestTime) > 0) {
+                        newestTime = findData.ftLastWriteTime;
+                        newestSaveId = folderName;
+                    }
+                }
+            }
+        }
+    } while (FindNextFileA(hFind, &findData) != 0);
+
+    FindClose(hFind);
+
+    if (newestSaveId.empty()) {
+        LOG_ERROR("No valid save folders found in: {}", saveGamesPath);
+        return {};
+    }
+
+    std::string savePath = saveGamesPath + "\\" + newestSaveId + "\\Level.sav";
+    LOG_INFO("Using save file: {}", savePath);
+
+    // Check if player name cache is still valid
     auto now = std::chrono::steady_clock::now();
     auto cacheAge = std::chrono::duration_cast<std::chrono::minutes>(now - cacheTimestamp).count();
 
@@ -415,7 +524,11 @@ std::vector<GuildInfo> PalAPI::GetGuilds() {
                  cachedPlayerNames.size(), cacheAge);
     }
 
+    // Parse guilds from save file
     std::vector<GuildInfo> guilds = SaveParser::ParseGuildsFromSave(savePath, cachedPlayerNames);
+
+    // Write to cache file (cacheFilePath already set above)
+    SaveParser::WriteGuildsCache(guilds, cacheFilePath);
 
     LOG_INFO("Retrieved {} guilds from save file", guilds.size());
     return guilds;
@@ -521,10 +634,14 @@ std::string PalAPI::ExecuteCommand(const std::string& command) {
     std::string cmdLower = cmd;
     for (char& c : cmdLower) c = tolower(c);
 
-    // Special handler for getGuilds - call C++ function directly
+    // Special handler for getGuilds - read from cache
     if (cmdLower == "getguilds") {
-        LOG_INFO("getGuilds command - calling GetGuilds()");
+        LOG_INFO("getGuilds command - reading from cache");
         std::vector<GuildInfo> guilds = GetGuilds();
+
+        if (guilds.empty()) {
+            return "No guild data available. Run 'refreshGuilds' first to populate cache.";
+        }
 
         // Format each guild on separate lines
         std::string output = "";
@@ -537,7 +654,20 @@ std::string PalAPI::ExecuteCommand(const std::string& command) {
             }
         }
 
-        LOG_INFO("getGuilds returning: {}", output);
+        LOG_INFO("getGuilds returning {} guilds from cache", guilds.size());
+        return output;
+    }
+
+    // Special handler for refreshGuilds - parse save file and update cache
+    if (cmdLower == "refreshguilds") {
+        LOG_INFO("refreshGuilds command - parsing save file");
+        std::vector<GuildInfo> guilds = RefreshGuilds();
+
+        std::string output = "Successfully refreshed guild cache.\n";
+        output += "Found " + std::to_string(guilds.size()) + " guilds.\n";
+        output += "Use 'getGuilds' to view cached data.";
+
+        LOG_INFO("refreshGuilds completed: {} guilds", guilds.size());
         return output;
     }
 
@@ -562,6 +692,15 @@ SERVER INFORMATION (GET):
   metrics, getmetrics
     Description: View server performance metrics
     Example: metrics
+
+GUILD MANAGEMENT:
+  getGuilds
+    Description: Get cached guild information (instant)
+    Example: getGuilds
+
+  refreshGuilds
+    Description: Parse save file and update guild cache (~6 seconds)
+    Example: refreshGuilds
 
 SERVER ACTIONS (POST):
   announce <message>

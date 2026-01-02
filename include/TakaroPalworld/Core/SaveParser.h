@@ -15,6 +15,12 @@ public:
     static std::vector<GuildInfo> ParseGuildsFromSave(const std::string& savePath,
                                                        const std::vector<std::string>& playerNames = {});
 
+    // Write guilds to cache JSON file
+    static bool WriteGuildsCache(const std::vector<GuildInfo>& guilds, const std::string& cacheFilePath);
+
+    // Read guilds from cache JSON file
+    static std::vector<GuildInfo> ReadGuildsCache(const std::string& cacheFilePath);
+
 private:
     static std::string ReadString(std::ifstream& file);
     static uint32_t ReadUInt32(std::ifstream& file);
