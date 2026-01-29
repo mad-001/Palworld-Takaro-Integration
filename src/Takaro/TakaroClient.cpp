@@ -1,6 +1,7 @@
 #include "TakaroPalworld/Takaro/TakaroClient.h"
 #include "TakaroPalworld/Core/Logger.h"
 #include "TakaroPalworld/Core/PalAPI.h"
+#include "TakaroPalworld/Core/GameMemory.h"
 #include <chrono>
 #include <thread>
 #include <windows.h>
@@ -496,11 +497,140 @@ void TakaroClient::HandleRequest(const json& message) {
                 }
             }
             else if (command == "getInventory") {
-                // Route to getInventory handler (placeholder for now)
-                responsePayload = {
-                    {"success", false},
-                    {"rawResult", "getInventory not yet implemented"}
-                };
+                try {
+                    LOG_INFO("getInventory command received, payload: {}", payload.dump());
+
+                    // Get game state and player array
+                    auto* gameState = GameMemory::GetGameState();
+                    if (!gameState) {
+                        responsePayload = {
+                            {"success", false},
+                            {"rawResult", "Error: Failed to get game state"}
+                        };
+                        return;
+                    }
+
+                    // Find PlayerArray
+                    const uintptr_t playerArrayOffsets[] = {0x2A0, 0x2B0, 0x2C0, 0x2D0};
+                    TArray<APlayerState*>* playerArray = nullptr;
+                    for (uintptr_t offset : playerArrayOffsets) {
+                        auto* arr = reinterpret_cast<TArray<APlayerState*>*>(
+                            reinterpret_cast<uintptr_t>(gameState) + offset
+                        );
+                        if (arr && arr->IsValid()) {
+                            playerArray = arr;
+                            break;
+                        }
+                    }
+
+                    if (!playerArray || !playerArray->IsValid()) {
+                        responsePayload = {
+                            {"success", false},
+                            {"rawResult", "Error: No players found on server"}
+                        };
+                        return;
+                    }
+
+                    // Determine filter mode
+                    std::string filterPlayerName = payload.contains("playerName") ? payload["playerName"] : "";
+                    std::string filterPlayerId = payload.contains("playerId") ? payload["playerId"] : "";
+                    bool getAllPlayers = filterPlayerName.empty() && filterPlayerId.empty();
+
+                    LOG_INFO("Filter mode - playerName: '{}', playerId: '{}', getAll: {}",
+                             filterPlayerName, filterPlayerId, getAllPlayers);
+
+                    json playersInventories = json::array();
+                    PalAPI& palAPI = PalAPI::GetInstance();
+
+                    // Iterate through all online players
+                    for (int32_t i = 0; i < playerArray->Num(); i++) {
+                        APlayerState* playerState = (*playerArray)[i];
+                        if (!GameMemory::IsValidPointer(playerState)) {
+                            continue;
+                        }
+
+                        // Get Steam ID
+                        std::string steamId;
+                        const uintptr_t idOffsets[] = {0x300, 0x310, 0x320, 0x330};
+                        for (uintptr_t offset : idOffsets) {
+                            FString* sid = reinterpret_cast<FString*>(
+                                reinterpret_cast<uintptr_t>(playerState) + offset
+                            );
+                            if (sid && sid->Data) {
+                                steamId = sid->ToString();
+                                if (!steamId.empty()) break;
+                            }
+                        }
+
+                        // Get Character Name (PlayerName field, NOT Steam name)
+                        std::string characterName;
+                        const uintptr_t nameOffsets[] = {0x340, 0x350, 0x360, 0x370};
+                        for (uintptr_t offset : nameOffsets) {
+                            FString* pname = reinterpret_cast<FString*>(
+                                reinterpret_cast<uintptr_t>(playerState) + offset
+                            );
+                            if (pname && pname->Data) {
+                                characterName = pname->ToString();
+                                if (!characterName.empty()) break;
+                            }
+                        }
+
+                        // Apply filters
+                        if (!filterPlayerId.empty() && steamId != filterPlayerId) {
+                            continue; // Skip if filtering by playerId and doesn't match
+                        }
+                        if (!filterPlayerName.empty() && characterName != filterPlayerName) {
+                            continue; // Skip if filtering by playerName and doesn't match
+                        }
+
+                        // Get inventory for this player
+                        auto inventory = palAPI.GetPlayerInventory(steamId);
+
+                        json itemsArray = json::array();
+                        for (const auto& [itemId, count] : inventory) {
+                            itemsArray.push_back({
+                                {"itemId", itemId},
+                                {"count", count}
+                            });
+                        }
+
+                        // Add player with inventory
+                        playersInventories.push_back({
+                            {"characterName", characterName},
+                            {"steamId", steamId},
+                            {"itemCount", inventory.size()},
+                            {"inventory", itemsArray}
+                        });
+
+                        LOG_INFO("Got {} items for player '{}' ({})", inventory.size(), characterName, steamId);
+                    }
+
+                    if (playersInventories.empty()) {
+                        std::string msg = "No players found";
+                        if (!filterPlayerName.empty()) {
+                            msg += " with character name: " + filterPlayerName;
+                        } else if (!filterPlayerId.empty()) {
+                            msg += " with Steam ID: " + filterPlayerId;
+                        }
+                        responsePayload = {
+                            {"success", false},
+                            {"rawResult", msg}
+                        };
+                    } else {
+                        responsePayload = {
+                            {"success", true},
+                            {"rawResult", playersInventories.dump()}
+                        };
+                        LOG_INFO("Returned inventories for {} player(s)", playersInventories.size());
+                    }
+
+                } catch (const std::exception& e) {
+                    LOG_ERROR("Failed to get inventory - Exception: {}", e.what());
+                    responsePayload = {
+                        {"success", false},
+                        {"rawResult", std::string("Failed to retrieve inventory: ") + e.what()}
+                    };
+                }
             }
             else {
                 // Log command execution

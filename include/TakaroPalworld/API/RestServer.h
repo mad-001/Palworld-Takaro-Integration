@@ -37,6 +37,7 @@ private:
     crow::response HandleGiveItem(const crow::request& req);
     crow::response HandleGetPlayers();
     crow::response HandleGetPlayer(const std::string& playerId);
+    crow::response HandleGetPlayerInventory(const std::string& playerId);
     crow::response HandleTeleportPlayer(const crow::request& req);
     crow::response HandleKickPlayer(const crow::request& req);
     crow::response HandleBanPlayer(const crow::request& req);

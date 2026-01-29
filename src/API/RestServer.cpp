@@ -122,6 +122,12 @@ void RestServer::SetupRoutes() {
         return HandleGetPlayer(playerId);
     });
 
+    CROW_ROUTE(app, "/v1/pdapi/player/<string>/inventory")
+    .methods("GET"_method, "OPTIONS"_method)
+    ([this](const std::string& playerId) {
+        return HandleGetPlayerInventory(playerId);
+    });
+
     LOG_INFO("[RESTAPI] Routes configured successfully");
 }
 
@@ -281,6 +287,30 @@ crow::response RestServer::HandleGetPlayer(const std::string& playerId) {
     response["position"]["x"] = player.position.x;
     response["position"]["y"] = player.position.y;
     response["position"]["z"] = player.position.z;
+
+    crow::response res;
+    res.code = 200;
+    res.set_header("Content-Type", "application/json");
+    res.write(response.dump());
+    return res;
+}
+
+crow::response RestServer::HandleGetPlayerInventory(const std::string& playerId) {
+    auto& api = PalAPI::GetInstance();
+    auto inventory = api.GetPlayerInventory(playerId);
+
+    json response;
+    response["playerId"] = playerId;
+    response["inventory"] = json::array();
+
+    for (const auto& [itemName, quantity] : inventory) {
+        json item;
+        item["itemName"] = itemName;
+        item["quantity"] = quantity;
+        response["inventory"].push_back(item);
+    }
+
+    response["totalItems"] = inventory.size();
 
     crow::response res;
     res.code = 200;
